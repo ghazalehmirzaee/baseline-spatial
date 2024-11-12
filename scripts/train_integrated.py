@@ -58,9 +58,7 @@ from tqdm import tqdm
 
 
 # Local imports
-# from src.data.loaders import create_data_loaders
-from ..src.data.loaders import create_data_loaders
-
+from src.data.loaders import create_data_loaders
 from src.data.datasets import ChestXrayDataset
 from src.models.integration import IntegratedModel
 from src.utils.metrics import MetricTracker
