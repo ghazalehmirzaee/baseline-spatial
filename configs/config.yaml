@@ -1,0 +1,51 @@
+# configs/config.yaml
+
+data:
+  train_image_dir: "/users/gm00051/ChestX-ray14/categorized_images/train"
+  val_image_dir: "/users/gm00051/ChestX-ray14/categorized_images/val"
+  test_image_dir: "/users/gm00051/ChestX-ray14/categorized_images/test"
+  train_label_file: "/users/gm00051/ChestX-ray14/labels/train_list.txt"
+  val_label_file: "/users/gm00051/ChestX-ray14/labels/val_list.txt"
+  test_label_file: "/users/gm00051/ChestX-ray14/labels/test_list.txt"
+  bbox_file: "/users/gm00051/ChestX-ray14/labels/BBox_List_2017.csv"
+
+model:
+  num_classes: 14
+  vit_pretrained: true
+  vit_checkpoint: "/users/gm00051/projects/cvpr/baseline/Graph-Augmented-Vision-Transformers/scripts/checkpoints/best_model.pt"
+  feature_dim: 768
+  graph_hidden_dim: 256
+  graph_num_heads: 8
+  graph_dropout: 0.1
+  fusion_type: "adaptive"
+
+training:
+  num_epochs: 2
+  batch_size: 32
+  num_workers: 8
+  early_stopping_patience: 10
+  gradient_clip_val: 1.0
+  mixed_precision: true
+  accumulate_grad_batches: 4
+
+optimizer:
+  lr: 1.0e-4
+  weight_decay: 0.01
+  first_cycle_steps: 30
+  cycle_mult: 1.0
+  max_lr: 3.0e-4
+  min_lr: 1.0e-6
+  warmup_steps: 5
+  gamma: 0.5
+
+paths:
+  checkpoint_dir: "/users/gm00051/projects/cvpr/baseline+spatial/checkpoints"
+  log_dir: "/users/gm00051/projects/cvpr/baseline+spatial/logs"
+  output_dir: "/users/gm00051/projects/cvpr/baseline+spatial/outputs"
+
+wandb:
+  project: "Graph-Augmented ViT"
+  entity: "mirzaeeghazal"
+  run_name: "baseline+spatial"
+  tags: [ "spatial-graph", "chest-xray", "multi-label" ]
+
