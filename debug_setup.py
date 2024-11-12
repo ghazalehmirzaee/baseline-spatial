@@ -1,47 +1,27 @@
-import os
 import sys
 from pathlib import Path
+import importlib.util
 
 
-def check_environment():
-    print("=== Environment Check ===")
-    print(f"Current working directory: {os.getcwd()}")
-    print(f"\nPYTHONPATH:")
-    for path in sys.path:
-        print(f"  {path}")
+def check_module(module_name, file_path):
+    print(f"\nChecking {module_name}...")
+    print(f"Looking for file: {file_path}")
+    print(f"File exists: {Path(file_path).exists()}")
 
-    print("\n=== Project Structure ===")
-    project_root = Path(os.getcwd())
-    print(f"Project root: {project_root}")
-
-    # Check critical files and directories
-    critical_paths = [
-        'src/__init__.py',
-        'src/data/__init__.py',
-        'src/data/loaders.py',
-        'src/data/datasets.py',
-        'setup.py',
-        'scripts/train_integrated.py',
-        'configs/integrated_model_config.yaml'
-    ]
-
-    for path in critical_paths:
-        full_path = project_root / path
-        status = '✓' if full_path.exists() else '✗'
-        print(f"{status} {path} {'exists' if status == '✓' else 'missing'}")
-
-    print("\n=== Import Test ===")
-    try:
-        from src.data.loaders import create_data_loaders
-        print("✓ Successfully imported create_data_loaders")
-    except ImportError as e:
-        print(f"✗ Failed to import create_data_loaders: {str(e)}")
-        print("Traceback:")
-        import traceback
-        traceback.print_exc()
+    spec = importlib.util.find_spec(module_name)
+    if spec is not None:
+        print(f"Module can be imported from: {spec.origin}")
+    else:
+        print(f"Module not found in Python path")
 
 
-if __name__ == "__main__":
-    check_environment()
+project_root = Path(__file__).resolve().parent
+print(f"Project root: {project_root}")
+print("\nPython path:")
+for p in sys.path:
+    print(f"  {p}")
 
-    
+check_module('src.data.loaders', project_root / 'src' / 'data' / 'loaders.py')
+check_module('src.data.datasets', project_root / 'src' / 'data' / 'datasets.py')
+
+
