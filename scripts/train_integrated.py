@@ -39,10 +39,8 @@ import traceback
 from datetime import datetime
 from pathlib import Path
 
-# Add the project root to the Python path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
+sys.path = [str(PROJECT_ROOT)] + sys.path
 
 print("PYTHONPATH:", sys.path)
 
@@ -60,7 +58,9 @@ from tqdm import tqdm
 
 
 # Local imports
-from src.data.loaders import create_data_loaders
+# from src.data.loaders import create_data_loaders
+from ..src.data.loaders import create_data_loaders
+
 from src.data.datasets import ChestXrayDataset
 from src.models.integration import IntegratedModel
 from src.utils.metrics import MetricTracker
