@@ -42,24 +42,34 @@ def parse_args():
 
 
 def setup_distributed():
-    """Initialize distributed training."""
-    if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
-        rank = int(os.environ['RANK'])
-        world_size = int(os.environ['WORLD_SIZE'])
-        gpu = int(os.environ['LOCAL_RANK'])
-    else:
-        rank = -1
-        world_size = -1
-        gpu = -1
+    """Initialize distributed training with fallback to single GPU."""
+    try:
+        if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
+            rank = int(os.environ['RANK'])
+            world_size = int(os.environ['WORLD_SIZE'])
+            gpu = int(os.environ['LOCAL_RANK'])
 
-    torch.cuda.set_device(gpu)
-    torch.distributed.init_process_group(
-        backend='nccl',
-        init_method='env://',
-        world_size=world_size,
-        rank=rank
-    )
-    return rank, world_size
+            torch.cuda.set_device(gpu)
+            torch.distributed.init_process_group(
+                backend='nccl',
+                init_method='env://',
+                world_size=world_size,
+                rank=rank
+            )
+            return rank, world_size
+        else:
+            print("Distributed environment variables not found.")
+            print("Falling back to single GPU training.")
+            if torch.cuda.is_available():
+                torch.cuda.set_device(0)
+            return 0, 1
+
+    except Exception as e:
+        print(f"Error setting up distributed training: {e}")
+        print("Falling back to single GPU training.")
+        if torch.cuda.is_available():
+            torch.cuda.set_device(0)
+        return 0, 1
 
 
 def main():
@@ -69,11 +79,15 @@ def main():
     with open(args.config) as f:
         config = yaml.safe_load(f)
 
-    # Setup distributed training
+    # Setup training device and distributed training
     rank, world_size = setup_distributed()
     is_main_process = rank == 0
 
-    # Set up wandb
+    if is_main_process:
+        print(f"Training with {world_size} GPU{'s' if world_size > 1 else ''}")
+        print(f"Running on rank {rank} of {world_size}")
+
+    # Set up wandb only on main process
     if is_main_process:
         wandb.init(
             project=config['wandb']['project'],
@@ -82,7 +96,7 @@ def main():
             config=config
         )
 
-    # Create datasets and dataloaders
+    # Create datasets
     train_dataset = ChestXrayDataset(
         image_dir=config['data']['train_image_dir'],
         label_file=config['data']['train_label_file'],
@@ -97,10 +111,12 @@ def main():
         transform=False
     )
 
-    train_sampler = DistributedSampler(train_dataset)
+    # Create data loaders with appropriate sampler
+    train_sampler = DistributedSampler(train_dataset) if world_size > 1 else None
     train_loader = torch.utils.data.DataLoader(
         train_dataset,
-        batch_size=config['training']['batch_size'] // world_size,
+        batch_size=config['training']['batch_size'] // max(1, world_size),
+        shuffle=(train_sampler is None),
         sampler=train_sampler,
         num_workers=config['training']['num_workers'],
         pin_memory=True
@@ -108,7 +124,8 @@ def main():
 
     val_loader = torch.utils.data.DataLoader(
         val_dataset,
-        batch_size=config['training']['batch_size'] // world_size,
+        batch_size=config['training']['batch_size'] // max(1, world_size),
+        shuffle=False,
         num_workers=config['training']['num_workers'],
         pin_memory=True
     )
@@ -123,14 +140,18 @@ def main():
         graph_num_heads=config['model']['graph_num_heads']
     )
 
-    # Move model to GPU and wrap with DDP
+    # Move model to appropriate device
     model = model.cuda()
-    model = DDP(
-        model,
-        device_ids=[args.local_rank],
-        output_device=args.local_rank,
-        find_unused_parameters=True
-    )
+
+    # Wrap model with DDP if using distributed training
+    if world_size > 1:
+        model = DDP(
+            model,
+            device_ids=[rank],
+            output_device=rank,
+            find_unused_parameters=True
+        )
+
 
     # Create optimizer and scheduler
     optimizer = optim.AdamW(
@@ -369,6 +390,13 @@ def main():
 
         wandb.finish()
 
+# For running the script
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except Exception as e:
+        print(f"Error during training: {e}")
+        import traceback
+        traceback.print_exc()
 
+        
