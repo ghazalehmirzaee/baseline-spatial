@@ -25,7 +25,9 @@ training:
   gradient_clip_val: 1.0
   mixed_precision: true
   accumulate_grad_batches: 4
-
+  graph_epochs: 1      # Number of epochs for graph training phase
+  integration_epochs: 1 # Number of epochs for integration phase
+  fine_tuning_epochs: 1 # Number of epochs for fine-tuning phase
 
 optimizer:
   min_lr: 1.0e-5
