@@ -1,9 +1,10 @@
 from setuptools import setup, find_packages
 
 setup(
-    name="baseline-spatial",
+    name="baseline_spatial",
     version="0.1.0",
     packages=find_packages(),
+    python_requires=">=3.8",
     install_requires=[
         "torch>=1.9.0",
         "torchvision>=0.10.0",
@@ -14,6 +15,5 @@ setup(
         "tqdm>=4.50.0",
         "PyYAML>=5.4.0",
     ],
-    python_requires=">=3.8",
 )
 
