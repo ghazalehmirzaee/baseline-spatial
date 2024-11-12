@@ -71,8 +71,6 @@ print(f"Project root: {PROJECT_ROOT}")
 print(f"Current working directory: {Path.cwd()}")
 
 
-
-
 # Custom collate function for handling None values
 def custom_collate(batch):
     """Custom collate function to handle None values in bounding boxes."""
