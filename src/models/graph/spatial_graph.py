@@ -273,4 +273,3 @@ class GraphAttentionLayer(nn.Module):
 
         return x, attn.mean(dim=1)  # Average attention weights across heads
 
-    

@@ -1,6 +1,6 @@
 # src/models/integration.py
 
-from typing import Optional, Dict
+from typing import Optional, Dict, List
 
 import torch
 import torch.nn as nn
@@ -13,18 +13,14 @@ from src.models.losses import SpatialConsistencyLoss, AnatomicalConstraintLoss, 
 
 
 def interpolate_pos_embed(pos_embed_checkpoint, num_patches):
-    """
-    Interpolate position embeddings for different image sizes.
-    """
+    """Interpolate position embeddings for different image sizes."""
     num_extra_tokens = 1  # cls token
     embedding_dim = pos_embed_checkpoint.shape[-1]
 
-    # Only the position tokens are interpolated
     pos_tokens = pos_embed_checkpoint[:, num_extra_tokens:]
     pos_tokens = pos_tokens.reshape(-1, int(math.sqrt(pos_tokens.shape[1])),
                                     int(math.sqrt(pos_tokens.shape[1])), embedding_dim)
 
-    # Interpolate
     pos_tokens = torch.nn.functional.interpolate(
         pos_tokens.permute(0, 3, 1, 2),
         size=(int(math.sqrt(num_patches)), int(math.sqrt(num_patches))),
@@ -33,7 +29,6 @@ def interpolate_pos_embed(pos_embed_checkpoint, num_patches):
     )
     pos_tokens = pos_tokens.permute(0, 2, 3, 1).flatten(1, 2)
 
-    # Combine with cls token
     pos_embed = torch.cat((pos_embed_checkpoint[:, :num_extra_tokens], pos_tokens), dim=1)
 
     return pos_embed
@@ -42,7 +37,6 @@ def interpolate_pos_embed(pos_embed_checkpoint, num_patches):
 class IntegratedModel(nn.Module):
     """Integrated model combining ViT with spatial graph attention."""
 
-    # Define anatomical regions as class attribute
     ANATOMICAL_REGIONS = {
         'upper_lung': {'weight': 1.0, 'position': (0.25, 0.25)},
         'middle_lung': {'weight': 1.0, 'position': (0.5, 0.5)},
@@ -62,7 +56,8 @@ class IntegratedModel(nn.Module):
             graph_hidden_dim: int = 256,
             graph_num_heads: int = 8,
             image_size: int = 1000,
-            patch_size: int = 16
+            patch_size: int = 16,
+            grid_sizes: List[int] = [5, 15, 25]  # Added grid_sizes parameter
     ):
         super().__init__()
 
@@ -78,13 +73,13 @@ class IntegratedModel(nn.Module):
         if freeze_vit:
             self._freeze_vit_layers()
 
-        # Initialize spatial graph component
+        # Initialize spatial graph component with grid_sizes instead of num_anatomical_regions
         self.spatial_graph = SpatialDistanceGraph(
             num_diseases=num_classes,
             feature_dim=feature_dim,
             hidden_dim=graph_hidden_dim,
             num_heads=graph_num_heads,
-            num_anatomical_regions=self.num_anatomical_regions
+            grid_sizes=grid_sizes  # Pass grid_sizes instead of num_anatomical_regions
         )
 
         # Initialize anatomical attention
@@ -122,10 +117,8 @@ class IntegratedModel(nn.Module):
 
     def _load_pretrained_vit(self, checkpoint_path: str) -> nn.Module:
         """Load pretrained ViT with proper position embedding interpolation."""
-        # Calculate number of patches for current image size
         num_patches = (self.image_size // self.patch_size) ** 2
 
-        # Initialize ViT with current image size
         vit = VisionTransformer(
             img_size=self.image_size,
             patch_size=self.patch_size,
@@ -136,7 +129,6 @@ class IntegratedModel(nn.Module):
         )
 
         try:
-            # Add safe globals for numpy scalar types
             torch.serialization.add_safe_globals([
                 'numpy._core.multiarray.scalar',
                 'numpy.core.multiarray.scalar',
@@ -144,23 +136,19 @@ class IntegratedModel(nn.Module):
                 '__builtin__.getattr',
             ])
 
-            # Load checkpoint with modified settings
             checkpoint = torch.load(
                 checkpoint_path,
                 map_location='cpu',
-                weights_only=False  # Changed to False to handle numpy scalars
+                weights_only=False
             )
 
-            # Get state dict (handle different checkpoint formats)
             state_dict = checkpoint.get('model_state_dict', checkpoint)
 
-            # Handle position embedding interpolation
             pos_embed_checkpoint = state_dict['pos_embed']
             if pos_embed_checkpoint.shape[1] != vit.pos_embed.shape[1]:
                 print(f"Interpolating position embeddings from {pos_embed_checkpoint.shape} to {vit.pos_embed.shape}")
                 state_dict['pos_embed'] = interpolate_pos_embed(pos_embed_checkpoint, num_patches)
 
-            # Load state dict
             msg = vit.load_state_dict(state_dict, strict=False)
             print(f"Loaded checkpoint with message: {msg}")
 
@@ -179,46 +167,36 @@ class IntegratedModel(nn.Module):
             param.requires_grad = False
 
         if unfreeze_last_n > 0:
-            # Unfreeze last n transformer blocks
             for block in self.vit.blocks[-unfreeze_last_n:]:
                 for param in block.parameters():
                     param.requires_grad = True
 
-            # Unfreeze final norm and head
             for param in self.vit.norm.parameters():
                 param.requires_grad = True
-
 
     def unfreeze_vit_layers(self, num_layers: int):
         """Unfreeze specified number of last ViT layers."""
         self._freeze_vit_layers(unfreeze_last_n=num_layers)
 
     def forward(
-        self,
-        images: torch.Tensor,
-        bb_coords: Optional[torch.Tensor] = None,
-        labels: Optional[torch.Tensor] = None
+            self,
+            images: torch.Tensor,
+            bb_coords: Optional[torch.Tensor] = None,
+            labels: Optional[torch.Tensor] = None
     ) -> Dict[str, torch.Tensor]:
-        """
-        Forward pass through the integrated model.
-
-        Args:
-            images: Input images [batch_size, channels, height, width]
-            bb_coords: Bounding box coordinates [batch_size, num_diseases, 4]
-            labels: Ground truth labels [batch_size, num_diseases]
-
-        Returns:
-            Dictionary containing model outputs and losses
-        """
+        """Forward pass through the integrated model."""
         batch_size = images.shape[0]
 
         # Get ViT features
         vit_features = self.vit.forward_features(images)
         cls_token = vit_features[:, 0]
 
+        # Expand cls_token for spatial graph
+        expanded_features = cls_token.unsqueeze(1).expand(-1, self.num_classes, -1)  # [B, num_classes, D]
+
         # Process through spatial graph
         graph_features, spatial_attn = self.spatial_graph(
-            cls_token,
+            expanded_features,  # Pass expanded features
             bb_coords
         )
 
@@ -249,7 +227,7 @@ class IntegratedModel(nn.Module):
 
         # Compute loss if labels are provided
         if labels is not None:
-            loss = self.compute_loss(
+            loss = self._compute_losses(
                 logits=logits,
                 labels=labels,
                 vit_features=cls_token,
@@ -259,7 +237,10 @@ class IntegratedModel(nn.Module):
                 spatial_attn=spatial_attn,
                 anatomical_attn=anatomical_attn
             )
-            outputs['loss'] = loss
+            outputs['loss'] = loss['loss']  # Only return the total loss
+
+            # Add individual losses to outputs for logging
+            outputs.update({f'{k}_loss': v for k, v in loss.items() if k != 'loss'})
 
         return outputs
 
@@ -275,7 +256,6 @@ class IntegratedModel(nn.Module):
             anatomical_attn: torch.Tensor
     ) -> Dict[str, torch.Tensor]:
         """Compute all loss components."""
-
         # Classification loss
         cls_loss = self.bce_loss(logits, labels).mean()
 
@@ -315,3 +295,4 @@ class IntegratedModel(nn.Module):
             'consistency_loss': consistency_loss
         }
 
+    

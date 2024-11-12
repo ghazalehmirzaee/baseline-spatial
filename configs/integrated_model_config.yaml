@@ -9,6 +9,7 @@ model:
   image_size: 1000
   patch_size: 16
   pretrained_image_size: 224  # Original pretrained model image size
+  grid_sizes: [5, 15, 25]  # Added this parameter
 
 data:
   train_image_dir: "/users/gm00051/ChestX-ray14/categorized_images/train"
