@@ -136,25 +136,24 @@ def train_epoch(model, phase, train_loader, optimizer, scheduler, scaler, metric
 
                 # Validate bounding boxes
                 if torch.isnan(bb_coords).any() or torch.isinf(bb_coords).any():
-                    logger.warning(f"Invalid bounding boxes in batch {batch_idx}, using None instead")
                     bb_coords = None
 
             # Clear gradients
             optimizer.zero_grad()
 
-            # Forward pass with mixed precision
-            with autocast(device_type='cuda', dtype=torch.float16):
-                outputs = model(images, bb_coords, labels)
-                loss = outputs['loss']
+            # Forward pass with mixed precision and error catching
+            try:
+                with torch.cuda.amp.autocast():
+                    outputs = model(images, bb_coords, labels)
+                    loss = outputs['loss']
+            except Exception as e:
+                print(f"Forward pass error in batch {batch_idx}: {str(e)}")
+                continue
 
             # Backward pass with gradient scaling
             scaler.scale(loss).backward()
-
-            # Gradient clipping
             scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-
-            # Update weights
             scaler.step(optimizer)
             scaler.update()
 
@@ -176,8 +175,7 @@ def train_epoch(model, phase, train_loader, optimizer, scheduler, scaler, metric
                 })
 
         except Exception as e:
-            logger.error(f"Error in batch {batch_idx}: {str(e)}")
-            logger.error("Stack trace:", exc_info=True)
+            print(f"Error in batch {batch_idx}: {str(e)}")
             continue
 
     if is_main_process:
@@ -370,6 +368,17 @@ def main():
         }
     ]
 
+    # Add this before training starts
+    print("Checking modules...")
+    print(f"AnatomicalAttention device: {next(model.anatomical_attention.parameters()).device}")
+    print(f"CrossAttentionFusion device: {next(model.fusion.parameters()).device}")
+    print(f"Sample batch info:")
+    images, labels, bb_coords = next(iter(train_loader))
+    print(f"Images shape: {images.shape}")
+    print(f"Labels shape: {labels.shape}")
+    print(f"BB coords shape: {bb_coords.shape}")
+
+    
     # Training loop
     total_epochs = sum(phase['epochs'] for phase in phases)
     current_epoch = start_epoch

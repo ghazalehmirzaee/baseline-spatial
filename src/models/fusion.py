@@ -13,7 +13,6 @@ class AnatomicalAttention(nn.Module):
             feature_dim: int
     ):
         super().__init__()
-
         self.num_diseases = num_diseases
         self.num_regions = num_regions
         self.feature_dim = feature_dim
@@ -29,8 +28,6 @@ class AnatomicalAttention(nn.Module):
         self.value_proj = nn.Linear(feature_dim, feature_dim)
 
         self.attention_scale = feature_dim ** -0.5
-
-        # Layer norm
         self.norm = nn.LayerNorm(feature_dim)
 
 
@@ -51,24 +48,23 @@ class AnatomicalAttention(nn.Module):
         batch_size = features.size(0)
         device = features.device
 
-        # Project queries, keys, values
+        # Move region embeddings to the correct device
+        region_embeds = self.region_embeddings.to(device)
+
+        # Project features
         Q = self.query_proj(features)
-        K = self.key_proj(self.region_embeddings[None].expand(batch_size, -1, -1).to(device))
-        V = self.value_proj(self.region_embeddings[None].expand(batch_size, -1, -1).to(device))
+        K = self.key_proj(region_embeds[None].expand(batch_size, -1, -1))
+        V = self.value_proj(region_embeds[None].expand(batch_size, -1, -1))
 
         # Compute attention scores
         attention = torch.matmul(Q, K.transpose(-2, -1)) * self.attention_scale
+        attention_weights = torch.nn.functional.softmax(attention, dim=-1)
 
-        # Normalize attention weights
-        attention = F.softmax(attention, dim=-1)
-
-        # Apply attention to values
-        attended_features = torch.matmul(attention, V)
-
-        # Apply layer norm
+        # Apply attention
+        attended_features = torch.matmul(attention_weights, V)
         attended_features = self.norm(attended_features)
 
-        return attended_features, attention
+        return attended_features, attention_weights
 
 
 class CrossAttentionFusion(nn.Module):
@@ -108,33 +104,33 @@ class CrossAttentionFusion(nn.Module):
             graph_features: torch.Tensor,
             anatomical_features: torch.Tensor
     ) -> torch.Tensor:
-        """
-        Fuse different feature types using cross-attention.
-        """
         batch_size = vit_features.size(0)
         device = vit_features.device
 
-        # Project to Q, K, V
-        q = self.q_proj(vit_features).view(batch_size, -1, self.num_heads, self.head_dim).transpose(1, 2)
-        k = self.k_proj(graph_features).view(batch_size, -1, self.num_heads, self.head_dim).transpose(1, 2)
-        v = self.v_proj(graph_features).view(batch_size, -1, self.num_heads, self.head_dim).transpose(1, 2)
+        # Reshape for multi-head attention
+        q = self.q_proj(vit_features).view(
+            batch_size, -1, self.num_heads, self.head_dim
+        ).transpose(1, 2)
+        k = self.k_proj(graph_features).view(
+            batch_size, -1, self.num_heads, self.head_dim
+        ).transpose(1, 2)
+        v = self.v_proj(graph_features).view(
+            batch_size, -1, self.num_heads, self.head_dim
+        ).transpose(1, 2)
 
         # Compute attention
         attn = torch.matmul(q, k.transpose(-2, -1)) * self.scale
-        attn = F.softmax(attn, dim=-1)
+        attn = torch.nn.functional.softmax(attn, dim=-1)
         attn = self.dropout(attn)
 
-        # Apply attention to values
-        graph_attended = torch.matmul(attn, v).transpose(1, 2).contiguous().view(batch_size, -1, self.feature_dim)
+        # Apply attention
+        out = torch.matmul(attn, v)
+        out = out.transpose(1, 2).contiguous().view(batch_size, -1, self.feature_dim)
 
-        # Combine all features
-        combined = torch.cat([
-            vit_features,
-            graph_attended,
-            anatomical_features
-        ], dim=-1)
+        # Combine features
+        combined = torch.cat([vit_features, out, anatomical_features], dim=-1)
 
-        # Fuse features
+        # Final fusion
         fused = self.fusion(combined)
         fused = self.norm(fused)
 
