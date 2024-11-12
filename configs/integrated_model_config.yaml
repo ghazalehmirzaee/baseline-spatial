@@ -1,5 +1,15 @@
 # configs/integrated_model_config.yaml
 
+model:
+  num_classes: 14
+  vit_checkpoint: "/users/gm00051/projects/cvpr/baseline/Graph-Augmented-Vision-Transformers/scripts/checkpoints/best_model.pt"
+  feature_dim: 768
+  graph_hidden_dim: 256
+  graph_num_heads: 8
+  image_size: 1000
+  patch_size: 16
+  pretrained_image_size: 224  # Original pretrained model image size
+
 data:
   train_image_dir: "/users/gm00051/ChestX-ray14/categorized_images/train"
   val_image_dir: "/users/gm00051/ChestX-ray14/categorized_images/val"
@@ -9,21 +19,13 @@ data:
   test_label_file: "/users/gm00051/ChestX-ray14/labels/test_list.txt"
   bbox_file: "/users/gm00051/ChestX-ray14/labels/BBox_List_2017.csv"
 
-model:
-  num_classes: 14
-  vit_checkpoint: "/users/gm00051/projects/cvpr/baseline/Graph-Augmented-Vision-Transformers/scripts/checkpoints/best_model.pt"
-  feature_dim: 768
-  graph_hidden_dim: 256
-  graph_num_heads: 8
-  graph_dropout: 0.1
-  fusion_type: "adaptive"
-
 training:
   batch_size: 128
   num_workers: 8
-  gradient_accumulation_steps: 4
-  gradient_clip_value: 1.0
+  gradient_clip_val: 1.0
   mixed_precision: true
+  accumulate_grad_batches: 4
+
 
 optimizer:
   lr: 1.0e-4

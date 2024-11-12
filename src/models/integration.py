@@ -1,18 +1,45 @@
 # src/models/integration.py
 
+from typing import Optional, Dict
+
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from typing import Dict, Optional, Tuple
 from timm.models.vision_transformer import VisionTransformer
 import math
 
+from src.models.fusion import CrossAttentionFusion, AnatomicalAttention
+from src.models.graph.spatial_graph import SpatialDistanceGraph
+from src.models.losses import SpatialConsistencyLoss, AnatomicalConstraintLoss, CrossDiseaseConsistencyLoss
+
+
+def interpolate_pos_embed(pos_embed_checkpoint, num_patches):
+    """
+    Interpolate position embeddings for different image sizes.
+    """
+    num_extra_tokens = 1  # cls token
+    embedding_dim = pos_embed_checkpoint.shape[-1]
+
+    # Only the position tokens are interpolated
+    pos_tokens = pos_embed_checkpoint[:, num_extra_tokens:]
+    pos_tokens = pos_tokens.reshape(-1, int(math.sqrt(pos_tokens.shape[1])),
+                                    int(math.sqrt(pos_tokens.shape[1])), embedding_dim)
+
+    # Interpolate
+    pos_tokens = torch.nn.functional.interpolate(
+        pos_tokens.permute(0, 3, 1, 2),
+        size=(int(math.sqrt(num_patches)), int(math.sqrt(num_patches))),
+        mode='bicubic',
+        align_corners=False
+    )
+    pos_tokens = pos_tokens.permute(0, 2, 3, 1).flatten(1, 2)
+
+    # Combine with cls token
+    pos_embed = torch.cat((pos_embed_checkpoint[:, :num_extra_tokens], pos_tokens), dim=1)
+
+    return pos_embed
+
 
 class IntegratedModel(nn.Module):
-    """
-    Integrates pretrained ViT with Spatial Distance Graph
-    """
-
     def __init__(
             self,
             pretrained_path: str,
@@ -21,9 +48,15 @@ class IntegratedModel(nn.Module):
             feature_dim: int = 768,
             graph_hidden_dim: int = 256,
             graph_num_heads: int = 8,
-            anatomical_regions: int = 7
-    ):
+            image_size: int = 1000,
+            patch_size: int = 16
+    , anatomical_regions=None):
         super().__init__()
+
+        self.num_classes = num_classes
+        self.feature_dim = feature_dim
+        self.image_size = image_size
+        self.patch_size = patch_size
 
         # Load pretrained ViT
         self.vit = self._load_pretrained_vit(pretrained_path)
@@ -73,22 +106,46 @@ class IntegratedModel(nn.Module):
         }
 
     def _load_pretrained_vit(self, checkpoint_path: str) -> nn.Module:
-        """Load pretrained ViT from checkpoint."""
-        checkpoint = torch.load(checkpoint_path)
+        """Load pretrained ViT with proper position embedding interpolation."""
+        # Calculate number of patches for current image size
+        num_patches = (self.image_size // self.patch_size) ** 2
 
-        # Initialize ViT model
+        # Initialize ViT with current image size
         vit = VisionTransformer(
-            img_size=1000,
-            patch_size=16,
-            embed_dim=768,
+            img_size=self.image_size,
+            patch_size=self.patch_size,
+            embed_dim=self.feature_dim,
             num_heads=12,
-            num_classes=14,
+            num_classes=self.num_classes,
             depth=12
         )
 
-        # Load state dict
-        vit.load_state_dict(checkpoint['model_state_dict'])
-        return vit
+        # Load checkpoint
+        try:
+            checkpoint = torch.load(
+                checkpoint_path,
+                map_location='cpu',
+                weights_only=True  # Use weights_only to address the warning
+            )
+
+            # Get state dict (handle different checkpoint formats)
+            state_dict = checkpoint.get('model_state_dict', checkpoint)
+
+            # Handle position embedding interpolation
+            pos_embed_checkpoint = state_dict['pos_embed']
+            if pos_embed_checkpoint.shape[1] != vit.pos_embed.shape[1]:
+                print(f"Interpolating position embeddings from {pos_embed_checkpoint.shape} to {vit.pos_embed.shape}")
+                state_dict['pos_embed'] = interpolate_pos_embed(pos_embed_checkpoint, num_patches)
+
+            # Load state dict
+            msg = vit.load_state_dict(state_dict, strict=False)
+            print(f"Loaded checkpoint with message: {msg}")
+
+            return vit
+
+        except Exception as e:
+            print(f"Error loading checkpoint: {e}")
+            raise
 
     def _freeze_vit_layers(self, unfreeze_last_n: int = 0):
         """Freeze ViT layers except last n blocks if specified."""
