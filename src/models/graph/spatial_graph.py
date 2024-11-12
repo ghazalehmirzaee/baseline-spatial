@@ -6,10 +6,14 @@ import torch.nn.functional as F
 from typing import Dict, List, Optional, Tuple
 import numpy as np
 
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from typing import Dict, List, Optional, Tuple
+import numpy as np
+
 
 class SpatialDistanceGraph(nn.Module):
-    """Implements the spatial distance graph component."""
-
     def __init__(
             self,
             num_diseases: int = 14,
@@ -18,7 +22,7 @@ class SpatialDistanceGraph(nn.Module):
             num_heads: int = 8,
             dropout: float = 0.1,
             anatomical_weights: Optional[torch.Tensor] = None,
-            num_anatomical_regions: Optional[int] = 7  # Added parameter with default value
+            grid_sizes: List[int] = [5, 15, 25]
     ):
         super().__init__()
 
@@ -26,65 +30,43 @@ class SpatialDistanceGraph(nn.Module):
         self.feature_dim = feature_dim
         self.hidden_dim = hidden_dim
         self.num_heads = num_heads
-        self.num_anatomical_regions = num_anatomical_regions
-
-        # Initialize anatomical region weights if not provided
-        if anatomical_weights is None:
-            self.register_buffer(
-                "anatomical_weights",
-                self._initialize_anatomical_weights()
-            )
-        else:
-            self.register_buffer("anatomical_weights", anatomical_weights)
+        self.grid_sizes = grid_sizes
 
         # Disease embedding layers
         self.disease_embedding = nn.Linear(feature_dim, hidden_dim)
 
-        # Region embeddings
-        self.region_embedding = nn.Parameter(
-            torch.randn(num_anatomical_regions, hidden_dim)
-        )
-
         # Graph attention layers
         self.gat_layers = nn.ModuleList([
-            GraphAttentionLayer(
-                hidden_dim,
-                hidden_dim,
-                num_heads,
-                dropout,
-                concat=True
-            ) for _ in range(3)  # Stack of 3 GAT layers
+            GraphAttentionLayer(hidden_dim, hidden_dim, num_heads, dropout)
+            for _ in range(3)
         ])
 
         # Output projection
         self.output_proj = nn.Linear(hidden_dim * num_heads, feature_dim)
 
-        # Dropout
+        # Dropout and normalization
         self.dropout = nn.Dropout(dropout)
-
-        # Layer normalization
         self.norm1 = nn.LayerNorm(hidden_dim)
         self.norm2 = nn.LayerNorm(feature_dim)
 
+        # Initialize anatomical weights
+        if anatomical_weights is None:
+            self.register_buffer("anatomical_weights", self._initialize_anatomical_weights())
+        else:
+            self.register_buffer("anatomical_weights", anatomical_weights)
+
     def _initialize_anatomical_weights(self) -> torch.Tensor:
-        """Initialize anatomical region weights based on clinical knowledge."""
-        weights = {
-            "upper_lung": 1.0,
-            "middle_lung": 1.0,
-            "lower_lung": 1.2,
-            "cardiac": 1.5,
-            "costophrenic": 1.3,
-            "hilar": 1.1,
-            "mediastinal": 1.4
-        }
-
-        # Create 7x7 weight matrix for 7 anatomical regions
-        W = torch.ones(self.num_anatomical_regions, self.num_anatomical_regions)
-        for i, w1 in enumerate(weights.values()):
-            for j, w2 in enumerate(weights.values()):
-                W[i, j] = (w1 + w2) / 2
-
-        return W
+        """Initialize anatomical region weights."""
+        weights = torch.tensor([
+            1.0,  # Upper lung fields
+            1.0,  # Middle lung fields
+            1.2,  # Lower lung fields
+            1.5,  # Cardiac region
+            1.3,  # Costophrenic angles
+            1.1,  # Hilar regions
+            1.4  # Mediastinal region
+        ])
+        return weights
 
     def compute_spatial_distribution(
             self,
@@ -92,11 +74,12 @@ class SpatialDistanceGraph(nn.Module):
             grid_size: int
     ) -> torch.Tensor:
         """Compute spatial distribution on grid for bounding boxes."""
-        batch_size = bb_coords.size(0)
-        grid = torch.zeros(batch_size, self.num_diseases, grid_size, grid_size)
+        batch_size = bb_coords.shape[0]
+        grid = torch.zeros(batch_size, self.num_diseases, grid_size, grid_size, device=bb_coords.device)
 
-        # Normalize coordinates to [0, grid_size]
-        bb_coords = bb_coords / 1000.0 * grid_size
+        # Scale coordinates to grid size
+        scale = grid_size / 1000.0  # assuming original image is 1000x1000
+        bb_coords = bb_coords * scale
 
         for b in range(batch_size):
             for d in range(self.num_diseases):
@@ -106,112 +89,106 @@ class SpatialDistanceGraph(nn.Module):
                     x2, y2 = min(grid_size - 1, int(x + w)), min(grid_size - 1, int(y + h))
                     grid[b, d, y1:y2 + 1, x1:x2 + 1] = 1.0
 
-        return grid
+        return grid.view(batch_size, self.num_diseases, -1)  # Flatten spatial dimensions
 
     def compute_emd(
             self,
             dist1: torch.Tensor,
             dist2: torch.Tensor,
-            weights: Optional[torch.Tensor] = None
+            grid_size: int
     ) -> torch.Tensor:
-        """Compute Earth Mover's Distance between distributions."""
-        if weights is None:
-            weights = self.anatomical_weights
+        """Compute Earth Mover's Distance between spatial distributions."""
+        batch_size = dist1.shape[0]
+        n = grid_size * grid_size
 
-        # Reshape distributions to 2D
-        d1 = dist1.view(dist1.size(0), -1)
-        d2 = dist2.view(dist2.size(0), -1)
+        # Create cost matrix based on grid positions
+        y, x = torch.meshgrid(torch.arange(grid_size), torch.arange(grid_size))
+        pos = torch.stack([x.flatten(), y.flatten()], dim=1).float().to(dist1.device)
 
-        # Normalize distributions
-        d1 = d1 / (d1.sum(dim=-1, keepdim=True) + 1e-6)
-        d2 = d2 / (d2.sum(dim=-1, keepdim=True) + 1e-6)
+        C = torch.cdist(pos, pos)  # n x n cost matrix
+        C = C / C.max()  # Normalize costs
 
-        # Compute cost matrix
-        size = int(np.sqrt(d1.size(-1)))
-        xx, yy = torch.meshgrid(torch.arange(size), torch.arange(size))
-        C = torch.sqrt((xx[None] - xx[:, None]) ** 2 + (yy[None] - yy[:, None]) ** 2).to(d1.device)
-        C = C * weights.view(-1, 1)
+        # Apply anatomical weights based on grid regions
+        region_weights = self._get_region_weights(grid_size)
+        C = C * region_weights
 
-        # Sinkhorn algorithm for EMD approximation
-        P = self._sinkhorn(d1, d2, C, epsilon=0.1, niter=100)
+        # Prepare distributions
+        P = dist1.view(batch_size, n, 1)
+        Q = dist2.view(batch_size, 1, n)
 
-        return torch.sum(P * C, dim=(-2, -1))
+        # Sinkhorn algorithm
+        eps = 0.1  # regularization parameter
+        max_iters = 100
+        log_P = torch.log(P + 1e-8)
+        log_Q = torch.log(Q + 1e-8)
 
-    def _sinkhorn(
-            self,
-            a: torch.Tensor,
-            b: torch.Tensor,
-            C: torch.Tensor,
-            epsilon: float,
-            niter: int
-    ) -> torch.Tensor:
-        """Sinkhorn algorithm for optimal transport."""
-        # Initialize dual variables
-        u = torch.zeros_like(a)
-        v = torch.zeros_like(b)
+        u = torch.zeros_like(P)
+        v = torch.zeros_like(Q)
 
-        # K is the kernel matrix
-        K = torch.exp(-C / epsilon)
+        K = torch.exp(-C / eps)
 
-        for _ in range(niter):
-            u = epsilon * (torch.log(a + 1e-8) - torch.logsumexp(v[:, None] + K / epsilon, dim=-1))
-            v = epsilon * (torch.log(b + 1e-8) - torch.logsumexp(u[:, None] + K.transpose(-2, -1) / epsilon, dim=-1))
+        for _ in range(max_iters):
+            u = log_P - torch.logsumexp(v + K, dim=-1, keepdim=True)
+            v = log_Q - torch.logsumexp(u + K.transpose(-2, -1), dim=-2, keepdim=True)
 
-        # Return transport plan
-        P = torch.exp((u[:, None] + v[:, None] + K) / epsilon)
-        return P
+        # Transport plan
+        P = torch.exp(u + v + K)
+
+        # Compute EMD
+        emd = torch.sum(P * C, dim=(-2, -1))
+
+        return emd
+
+    def _get_region_weights(self, grid_size: int) -> torch.Tensor:
+        """Get region weights for the grid."""
+        weights = torch.ones(grid_size, grid_size)
+
+        # Define regions (simplified)
+        upper = slice(0, grid_size // 3)
+        middle = slice(grid_size // 3, 2 * grid_size // 3)
+        lower = slice(2 * grid_size // 3, None)
+
+        # Apply weights
+        weights[upper, :] *= self.anatomical_weights[0]  # Upper lung
+        weights[middle, :] *= self.anatomical_weights[1]  # Middle lung
+        weights[lower, :] *= self.anatomical_weights[2]  # Lower lung
+
+        return weights.flatten()
 
     def forward(
             self,
             features: torch.Tensor,
             bb_coords: Optional[torch.Tensor] = None,
             adj_matrix: Optional[torch.Tensor] = None
-    ) -> Tuple[torch.Tensor, torch.Tensor]:  # Changed return type
-        """
-        Forward pass of the spatial graph module.
-
-        Args:
-            features: Input features from ViT [batch_size, num_diseases, feature_dim]
-            bb_coords: Bounding box coordinates [batch_size, num_diseases, 4]
-            adj_matrix: Pre-computed adjacency matrix [num_diseases, num_diseases]
-
-        Returns:
-            Tuple of (updated features, attention weights)
-        """
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Forward pass of the spatial graph."""
         batch_size = features.size(0)
 
         # Project features to hidden dimension
         x = self.disease_embedding(features)
         x = self.norm1(x)
 
-        # Compute spatial distributions if BB coordinates are provided
+        # Compute spatial adjacency if BB coordinates are provided
         if bb_coords is not None:
+            adj_matrix = torch.zeros(batch_size, self.num_diseases, self.num_diseases, device=features.device)
+
             # Multi-scale processing
-            distributions = []
-            for grid_size in [5, 15, 25]:
+            for grid_size in self.grid_sizes:
+                scale_weight = 0.2 if grid_size == 5 else 0.3 if grid_size == 15 else 0.5
                 dist = self.compute_spatial_distribution(bb_coords, grid_size)
-                distributions.append(dist)
 
-            # Compute EMD-based adjacency matrix if not provided
-            if adj_matrix is None:
-                adj_matrix = torch.zeros(batch_size, self.num_diseases, self.num_diseases, device=features.device)
+                for i in range(self.num_diseases):
+                    for j in range(i + 1, self.num_diseases):
+                        emd = self.compute_emd(dist[:, i], dist[:, j], grid_size)
+                        adj_matrix[:, i, j] += scale_weight * emd
+                        adj_matrix[:, j, i] += scale_weight * emd
 
-                for scale, dist in enumerate(distributions):
-                    scale_weight = [0.2, 0.3, 0.5][scale]
-                    for i in range(self.num_diseases):
-                        for j in range(i + 1, self.num_diseases):
-                            emd = self.compute_emd(dist[:, i], dist[:, j])
-                            adj_matrix[:, i, j] += scale_weight * emd
-                            adj_matrix[:, j, i] += scale_weight * emd
-
-                # Normalize adjacency matrix
-                adj_matrix = F.softmax(adj_matrix, dim=-1)
+            # Normalize adjacency matrix
+            adj_matrix = F.softmax(adj_matrix, dim=-1)
         else:
-            # Use learned adjacency if no bounding boxes provided
-            adj_matrix = torch.ones(
-                batch_size, self.num_diseases, self.num_diseases,
-                device=features.device
-            ) / self.num_diseases
+            # Use uniform adjacency if no bounding boxes
+            adj_matrix = torch.ones(batch_size, self.num_diseases, self.num_diseases,
+                                    device=features.device) / self.num_diseases
 
         # Process through GAT layers
         attention_weights = []
@@ -232,93 +209,68 @@ class SpatialDistanceGraph(nn.Module):
 
 
 class GraphAttentionLayer(nn.Module):
-    """Implementation of Graph Attention Layer."""
+    """Graph attention layer implementation."""
 
     def __init__(
             self,
             in_features: int,
             out_features: int,
             num_heads: int,
-            dropout: float,
-            concat: bool = True
+            dropout: float
     ):
         super().__init__()
 
         self.in_features = in_features
         self.out_features = out_features
         self.num_heads = num_heads
-        self.concat = concat
-        self.dropout = dropout
+        self.head_dim = out_features // num_heads
 
         # Linear transformations
-        self.W = nn.Parameter(
-            torch.zeros(size=(in_features, num_heads * out_features))
-        )
-        nn.init.xavier_uniform_(self.W.data)
-
-        # Attention mechanisms
-        self.a = nn.Parameter(
-            torch.zeros(size=(2 * out_features, num_heads, 1))
-        )
+        self.W = nn.Linear(in_features, out_features * num_heads)
+        self.a = nn.Parameter(torch.zeros(size=(2 * self.head_dim, num_heads, 1)))
         nn.init.xavier_uniform_(self.a.data)
 
-        # Dropout layer
-        self.dropout_layer = nn.Dropout(dropout)
+        # Dropout
+        self.dropout = nn.Dropout(dropout)
+
+        # Layer norm
+        self.norm = nn.LayerNorm(out_features * num_heads)
 
     def forward(
             self,
             x: torch.Tensor,
             adj: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Forward pass of the GAT layer.
-
-        Args:
-            x: Input features [batch_size, num_nodes, in_features]
-            adj: Adjacency matrix [batch_size, num_nodes, num_nodes]
-
-        Returns:
-            Updated node features and attention coefficients
-        """
-        batch_size = x.size(0)
-        num_nodes = x.size(1)
+        B = x.size(0)  # batch size
+        N = x.size(1)  # number of nodes
 
         # Linear transformation
-        Wh = torch.matmul(x, self.W)
-        Wh = Wh.view(batch_size, num_nodes, self.num_heads, -1)
+        x = self.W(x)  # [B, N, num_heads * head_dim]
+        x = x.view(B, N, self.num_heads, self.head_dim)
 
-        # Compute attention coefficients
-        Whj = Wh.unsqueeze(2)
-        Whi = Wh.unsqueeze(1)
+        # Compute attention
+        q = x.permute(0, 2, 1, 3)  # [B, num_heads, N, head_dim]
+        k = x.permute(0, 2, 1, 3)  # [B, num_heads, N, head_dim]
 
-        # Concatenate features
-        concat_features = torch.cat([Whj.repeat(1, 1, num_nodes, 1, 1),
-                                   Whi.repeat(1, num_nodes, 1, 1, 1)], dim=-1)
+        attn = torch.matmul(q, k.transpose(-2, -1)) * (self.head_dim ** -0.5)  # [B, num_heads, N, N]
 
-        # Compute attention scores
-        e = torch.matmul(concat_features, self.a).squeeze(-1)
+        # Apply adjacency mask
+        adj = adj.unsqueeze(1).expand(-1, self.num_heads, -1, -1)
+        attn = attn.masked_fill(adj == 0, float('-inf'))
 
-        # Mask attention scores based on adjacency matrix
-        if adj is not None:
-            adj = adj.unsqueeze(-1).expand(-1, -1, -1, self.num_heads)
-            e = e.masked_fill(adj == 0, float('-inf'))
-
-        # Apply attention
-        attention = F.softmax(e, dim=2)
-        attention = self.dropout_layer(attention)
+        # Normalize attention weights
+        attn = F.softmax(attn, dim=-1)
+        attn = self.dropout(attn)
 
         # Apply attention to values
-        h_prime = torch.matmul(
-            attention.permute(0, 3, 1, 2),
-            Wh.permute(0, 2, 1, 3)
-        ).permute(0, 2, 1, 3)
+        v = x.permute(0, 2, 1, 3)  # [B, num_heads, N, head_dim]
+        x = torch.matmul(attn, v)  # [B, num_heads, N, head_dim]
 
-        if self.concat:
-            # Concatenate multi-head results
-            out = h_prime.reshape(batch_size, num_nodes, -1)
-        else:
-            # Average multi-head results
-            out = h_prime.mean(dim=2)
+        # Reshape and apply layer norm
+        x = x.permute(0, 2, 1, 3).contiguous()  # [B, N, num_heads, head_dim]
+        x = x.view(B, N, -1)  # [B, N, num_heads * head_dim]
+        x = self.norm(x)
 
-        return out, attention
+        return x, attn.mean(dim=1)  # Average attention weights across heads
 
+    
