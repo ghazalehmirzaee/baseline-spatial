@@ -2,52 +2,41 @@ import os
 import sys
 from pathlib import Path
 
+# Add the project root to the Python path
+project_root = Path(__file__).resolve().parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+
 
 def test_imports():
+    print(f"Python version: {sys.version}")
     print(f"Current working directory: {os.getcwd()}")
-    print(f"Python path: {sys.path}")
+    print(f"Project root: {project_root}")
+    print("\nPython path:")
+    for p in sys.path:
+        print(f"  {p}")
+
+    print("\nTesting imports...")
 
     try:
-        print("\nTesting individual imports:")
-        print("-" * 50)
+        import src
+        print("✓ Successfully imported src")
+    except ImportError as e:
+        print(f"✗ Failed to import src: {e}")
 
-        # Test src.data imports
-        print("Testing src.data imports...")
-        from src.data.datasets import ChestXrayDataset
-        print("✓ ChestXrayDataset")
+    try:
+        from src.data import loaders
+        print("✓ Successfully imported src.data.loaders")
+    except ImportError as e:
+        print(f"✗ Failed to import src.data.loaders: {e}")
 
-        # Test src.models imports
-        print("\nTesting src.models imports...")
-        from src.models.integration import IntegratedModel
-        print("✓ IntegratedModel")
-
-        # Test src.utils imports
-        print("\nTesting src.utils imports...")
-        from src.utils.metrics import MetricTracker
-        from src.utils.checkpointing import CheckpointManager
-        from src.utils.optimization import CosineAnnealingWarmupRestarts
-        print("✓ MetricTracker")
-        print("✓ CheckpointManager")
-        print("✓ CosineAnnealingWarmupRestarts")
-
-        print("\n✓ All imports successful!")
-        return True
-
-    except Exception as e:
-        print(f"\n✗ Error during imports: {str(e)}")
-        print(f"Error type: {type(e)}")
-        print("\nTraceback:")
-        import traceback
-        traceback.print_exc()
-        return False
+    try:
+        from src.data.loaders import create_data_loaders
+        print("✓ Successfully imported create_data_loaders")
+    except ImportError as e:
+        print(f"✗ Failed to import create_data_loaders: {e}")
 
 
 if __name__ == "__main__":
-    # Add project root to Python path
-    PROJECT_ROOT = Path(__file__).resolve().parent
-    sys.path.insert(0, str(PROJECT_ROOT))
-
-    print("\nTesting imports...")
-    print(f"Project root: {PROJECT_ROOT}")
     test_imports()
 
