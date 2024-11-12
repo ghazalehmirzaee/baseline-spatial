@@ -4,9 +4,9 @@ import os
 import sys
 from pathlib import Path
 
-# Add project root to Python path
-project_root = Path(__file__).parent.parent
-sys.path.insert(0, str(project_root))
+# Add the project root to the Python path
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
 
 try:
     import torch
@@ -22,34 +22,28 @@ try:
     from datetime import datetime
     import json
 
-    try:
-        from src.data.datasets import ChestXrayDataset
-    except ImportError:
-        # Alternative import path
-        from baseline_spatial.src.data.datasets import ChestXrayDataset
-
-    try:
-        from src.models.integration import IntegratedModel
-    except ImportError:
-        from baseline_spatial.src.models.integration import IntegratedModel
-
-    try:
-        from src.utils.metrics import MetricTracker
-        from src.utils.checkpointing import CheckpointManager
-        from src.utils.optimization import CosineAnnealingWarmupRestarts
-    except ImportError:
-        from baseline_spatial.src.utils.metrics import MetricTracker
-        from baseline_spatial.src.utils.checkpointing import CheckpointManager
-        from baseline_spatial.src.utils.optimization import CosineAnnealingWarmupRestarts
+    # Import local modules
+    from src.data.datasets import ChestXrayDataset
+    from src.models.integration import IntegratedModel
+    from src.utils.metrics import MetricTracker
+    from src.utils.checkpointing import CheckpointManager
+    from src.utils.optimization import CosineAnnealingWarmupRestarts
 
 except ImportError as e:
     print(f"Error importing required modules: {e}")
-    print("\nPlease ensure all requirements are installed and the project is set up correctly:")
-    print("1. Run: pip install -r requirements.txt")
-    print("2. Make sure you're in the project root directory")
-    print("3. Run: pip install -e .")
+    print("\nTroubleshooting steps:")
+    print("1. Verify you're in the correct directory:")
+    print(f"   Current directory: {os.getcwd()}")
+    print(f"   Project root: {PROJECT_ROOT}")
+    print("\n2. Check if package is installed:")
+    print("   pip list | grep baseline-spatial")
+    print("\n3. Verify Python path:")
+    print(f"   PYTHONPATH: {os.environ.get('PYTHONPATH', 'Not set')}")
+    print("\n4. Install requirements:")
+    print("   pip install -r requirements.txt")
+    print("   pip install -e .")
     sys.exit(1)
-    
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Train the integrated model.')
