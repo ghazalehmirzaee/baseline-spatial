@@ -6,8 +6,6 @@ import sys
 from pathlib import Path
 from datetime import datetime
 
-from src.data import create_data_loaders
-
 # Add project root to Python path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -26,6 +24,7 @@ import wandb
 from tqdm import tqdm
 
 # Local imports
+from src.data.loaders import create_data_loaders
 from src.data.datasets import ChestXrayDataset
 from src.models.integration import IntegratedModel
 from src.utils.metrics import MetricTracker
