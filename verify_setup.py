@@ -13,10 +13,10 @@ def verify_setup():
 
     print("\nChecking directory structure:")
     paths = [
-        'baseline_spatial',
-        'baseline_spatial/data',
-        'baseline_spatial/models',
-        'baseline_spatial/utils',
+        'baseline-spatial',
+        'baseline-spatial/data',
+        'baseline-spatial/models',
+        'baseline-spatial/utils',
         'scripts',
         'configs'
     ]
