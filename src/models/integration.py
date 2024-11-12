@@ -40,6 +40,19 @@ def interpolate_pos_embed(pos_embed_checkpoint, num_patches):
 
 
 class IntegratedModel(nn.Module):
+    """Integrated model combining ViT with spatial graph attention."""
+
+    # Define anatomical regions as class attribute
+    ANATOMICAL_REGIONS = {
+        'upper_lung': {'weight': 1.0, 'position': (0.25, 0.25)},
+        'middle_lung': {'weight': 1.0, 'position': (0.5, 0.5)},
+        'lower_lung': {'weight': 1.2, 'position': (0.75, 0.75)},
+        'cardiac': {'weight': 1.5, 'position': (0.5, 0.5)},
+        'costophrenic': {'weight': 1.3, 'position': (0.8, 0.8)},
+        'hilar': {'weight': 1.1, 'position': (0.5, 0.3)},
+        'mediastinal': {'weight': 1.4, 'position': (0.5, 0.4)}
+    }
+
     def __init__(
             self,
             pretrained_path: str,
@@ -50,13 +63,14 @@ class IntegratedModel(nn.Module):
             graph_num_heads: int = 8,
             image_size: int = 1000,
             patch_size: int = 16
-    , anatomical_regions=None):
+    ):
         super().__init__()
 
         self.num_classes = num_classes
         self.feature_dim = feature_dim
         self.image_size = image_size
         self.patch_size = patch_size
+        self.num_anatomical_regions = len(self.ANATOMICAL_REGIONS)
 
         # Load pretrained ViT
         self.vit = self._load_pretrained_vit(pretrained_path)
@@ -66,16 +80,17 @@ class IntegratedModel(nn.Module):
 
         # Initialize spatial graph component
         self.spatial_graph = SpatialDistanceGraph(
-            num_classes=num_classes,
+            num_diseases=num_classes,
             feature_dim=feature_dim,
             hidden_dim=graph_hidden_dim,
-            num_heads=graph_num_heads
+            num_heads=graph_num_heads,
+            num_anatomical_regions=self.num_anatomical_regions
         )
 
         # Initialize anatomical attention
         self.anatomical_attention = AnatomicalAttention(
             num_diseases=num_classes,
-            num_regions=anatomical_regions,
+            num_regions=self.num_anatomical_regions,
             feature_dim=feature_dim
         )
 
@@ -120,12 +135,20 @@ class IntegratedModel(nn.Module):
             depth=12
         )
 
-        # Load checkpoint
         try:
+            # Add safe globals for numpy scalar types
+            torch.serialization.add_safe_globals([
+                'numpy._core.multiarray.scalar',
+                'numpy.core.multiarray.scalar',
+                '_codecs.encode',
+                '__builtin__.getattr',
+            ])
+
+            # Load checkpoint with modified settings
             checkpoint = torch.load(
                 checkpoint_path,
                 map_location='cpu',
-                weights_only=True  # Use weights_only to address the warning
+                weights_only=False  # Changed to False to handle numpy scalars
             )
 
             # Get state dict (handle different checkpoint formats)
@@ -145,6 +168,9 @@ class IntegratedModel(nn.Module):
 
         except Exception as e:
             print(f"Error loading checkpoint: {e}")
+            print("\nDetailed error information:")
+            import traceback
+            traceback.print_exc()
             raise
 
     def _freeze_vit_layers(self, unfreeze_last_n: int = 0):
@@ -162,15 +188,16 @@ class IntegratedModel(nn.Module):
             for param in self.vit.norm.parameters():
                 param.requires_grad = True
 
+
     def unfreeze_vit_layers(self, num_layers: int):
         """Unfreeze specified number of last ViT layers."""
         self._freeze_vit_layers(unfreeze_last_n=num_layers)
 
     def forward(
-            self,
-            images: torch.Tensor,
-            bb_coords: Optional[torch.Tensor] = None,
-            labels: Optional[torch.Tensor] = None
+        self,
+        images: torch.Tensor,
+        bb_coords: Optional[torch.Tensor] = None,
+        labels: Optional[torch.Tensor] = None
     ) -> Dict[str, torch.Tensor]:
         """
         Forward pass through the integrated model.
@@ -186,8 +213,8 @@ class IntegratedModel(nn.Module):
         batch_size = images.shape[0]
 
         # Get ViT features
-        vit_features = self.vit.forward_features(images)  # [B, N, D]
-        cls_token = vit_features[:, 0]  # Use CLS token
+        vit_features = self.vit.forward_features(images)
+        cls_token = vit_features[:, 0]
 
         # Process through spatial graph
         graph_features, spatial_attn = self.spatial_graph(
@@ -210,6 +237,7 @@ class IntegratedModel(nn.Module):
         # Final classification
         logits = self.classifier(fused_features)
 
+        # Prepare outputs
         outputs = {
             'logits': logits,
             'vit_features': cls_token,
@@ -219,9 +247,9 @@ class IntegratedModel(nn.Module):
             'anatomical_attention': anatomical_attn
         }
 
-        # Compute losses if labels are provided
+        # Compute loss if labels are provided
         if labels is not None:
-            losses = self._compute_losses(
+            loss = self.compute_loss(
                 logits=logits,
                 labels=labels,
                 vit_features=cls_token,
@@ -231,7 +259,7 @@ class IntegratedModel(nn.Module):
                 spatial_attn=spatial_attn,
                 anatomical_attn=anatomical_attn
             )
-            outputs.update(losses)
+            outputs['loss'] = loss
 
         return outputs
 
