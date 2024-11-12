@@ -28,11 +28,10 @@ training:
 
 
 optimizer:
-  lr: 1.0e-4
+  min_lr: 1.0e-5
+  max_lr: 3.0e-4
   weight_decay: 0.01
   first_cycle_steps: 30
-  max_lr: 3.0e-4
-  min_lr: 5.0e-5
   warmup_steps: 5
   gamma: 0.5
 

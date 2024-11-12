@@ -322,4 +322,3 @@ class GraphAttentionLayer(nn.Module):
 
         return out, attention
 
-    

@@ -152,16 +152,15 @@ def main():
             find_unused_parameters=True
         )
 
-
     # Create optimizer and scheduler
     optimizer = optim.AdamW(
         model.parameters(),
-        lr=config['optimizer']['lr'],
+        lr=config['optimizer']['min_lr'],  # Start with min_lr
         weight_decay=config['optimizer']['weight_decay']
     )
 
     scheduler = CosineAnnealingWarmupRestarts(
-        optimizer,
+        optimizer=optimizer,
         first_cycle_steps=config['optimizer']['first_cycle_steps'],
         cycle_mult=1.0,
         max_lr=config['optimizer']['max_lr'],
