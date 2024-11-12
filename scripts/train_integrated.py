@@ -261,8 +261,7 @@ def main():
         image_dir=config['data']['train_image_dir'],
         label_file=config['data']['train_label_file'],
         bbox_file=config['data']['bbox_file'],
-        transform=True,
-        debug=True
+        transform=True
     )
 
     val_dataset = ChestXrayDataset(
