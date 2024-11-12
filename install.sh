@@ -11,5 +11,5 @@ pip install -e .
 export PYTHONPATH="${PWD}:${PYTHONPATH}"
 
 # Verify installation
-python setup.py
+python verify_setup.py
 
