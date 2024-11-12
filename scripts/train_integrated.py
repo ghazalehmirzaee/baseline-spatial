@@ -1,16 +1,50 @@
 # scripts/train_integrated.py
-
+#
+# import argparse
+# import os
+# import sys
+# from pathlib import Path
+# from datetime import datetime
+#
+# # Add project root to Python path
+# PROJECT_ROOT = Path(__file__).resolve().parent.parent
+# sys.path.insert(0, str(PROJECT_ROOT))
+#
+# # PyTorch imports
+# import torch
+# import torch.nn as nn
+# import torch.optim as optim
+# from torch import autocast, GradScaler
+# from torch.nn.parallel import DistributedDataParallel as DDP
+# from torch.utils.data import DataLoader, DistributedSampler
+#
+# # Other imports
+# import yaml
+# import wandb
+# from tqdm import tqdm
+#
+# # Local imports
+# from src.data.loaders import create_data_loaders
+# from src.data.datasets import ChestXrayDataset
+# from src.models.integration import IntegratedModel
+# from src.utils.metrics import MetricTracker
+# from src.utils.checkpointing import CheckpointManager
+# from src.utils.optimization import CosineAnnealingWarmupRestarts
+# import traceback
+# import numpy as np
 import argparse
 import os
 import sys
-from pathlib import Path
+import traceback
 from datetime import datetime
+from pathlib import Path
 
-# Add project root to Python path
+# Add the project root to the Python path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(PROJECT_ROOT))
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
-# PyTorch imports
+# Rest of your imports
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -18,7 +52,6 @@ from torch import autocast, GradScaler
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, DistributedSampler
 
-# Other imports
 import yaml
 import wandb
 from tqdm import tqdm
@@ -30,8 +63,13 @@ from src.models.integration import IntegratedModel
 from src.utils.metrics import MetricTracker
 from src.utils.checkpointing import CheckpointManager
 from src.utils.optimization import CosineAnnealingWarmupRestarts
-import traceback
-import numpy as np
+
+# Add debug prints
+print(f"Python path: {sys.path}")
+print(f"Project root: {PROJECT_ROOT}")
+print(f"Current working directory: {Path.cwd()}")
+
+
 
 
 # Custom collate function for handling None values
