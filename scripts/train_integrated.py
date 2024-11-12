@@ -6,6 +6,8 @@ import sys
 from pathlib import Path
 from datetime import datetime
 
+from src.data import create_data_loaders
+
 # Add project root to Python path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -215,6 +217,8 @@ def main():
             config=config
         )
 
+    # In train_integrated.py
+
     # Create datasets
     train_dataset = ChestXrayDataset(
         image_dir=config['data']['train_image_dir'],
@@ -230,24 +234,26 @@ def main():
         transform=False
     )
 
-    # Create data loaders
-    train_sampler = DistributedSampler(train_dataset) if world_size > 1 else None
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=config['training']['batch_size'] // world_size,
-        shuffle=(train_sampler is None),
-        sampler=train_sampler,
-        num_workers=config['training']['num_workers'],
-        pin_memory=True
+    test_dataset = ChestXrayDataset(
+        image_dir=config['data']['test_image_dir'],
+        label_file=config['data']['test_label_file'],
+        bbox_file=config['data']['bbox_file'],
+        transform=False
     )
 
-    val_loader = DataLoader(
-        val_dataset,
-        batch_size=config['training']['batch_size'] // world_size,
-        shuffle=False,
+    # Create data loaders
+    loaders = create_data_loaders(
+        train_dataset=train_dataset,
+        val_dataset=val_dataset,
+        test_dataset=test_dataset,
+        batch_size=config['training']['batch_size'],
         num_workers=config['training']['num_workers'],
-        pin_memory=True
+        distributed=(world_size > 1)
     )
+
+    train_loader = loaders['train']
+    val_loader = loaders['val']
+    test_loader = loaders['test']
 
     # Create model
     model = IntegratedModel(
