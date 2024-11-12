@@ -29,6 +29,28 @@ from src.models.integration import IntegratedModel
 from src.utils.metrics import MetricTracker
 from src.utils.checkpointing import CheckpointManager
 from src.utils.optimization import CosineAnnealingWarmupRestarts
+import traceback
+import numpy as np
+
+
+# Custom collate function for handling None values
+def custom_collate(batch):
+    """Custom collate function to handle None values in bounding boxes."""
+    images, labels, bb_coords = zip(*batch)
+
+    # Stack images and labels
+    images = torch.stack(images)
+    labels = torch.stack(labels)
+
+    # Handle bounding boxes
+    if any(bb is not None for bb in bb_coords):
+        # Convert None to zero tensors
+        bb_coords = [bb if bb is not None else torch.zeros(14, 4) for bb in bb_coords]
+        bb_coords = torch.stack(bb_coords)
+    else:
+        bb_coords = None
+
+    return images, labels, bb_coords
 
 
 def parse_args():
