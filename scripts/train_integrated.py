@@ -4,10 +4,30 @@ import os
 import sys
 from pathlib import Path
 
-# Add the project root to the Python path
+# Get absolute path to project root
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+# Define custom import function
+def import_module(module_path, backup_path=None):
+    try:
+        # Try direct import
+        module_parts = module_path.split('.')
+        current_module = __import__(module_parts[0])
+        for part in module_parts[1:]:
+            current_module = getattr(current_module, part)
+        return current_module
+    except ImportError:
+        if backup_path:
+            # Try backup import path
+            module_parts = backup_path.split('.')
+            current_module = __import__(module_parts[0])
+            for part in module_parts[1:]:
+                current_module = getattr(current_module, part)
+            return current_module
+        raise
+
+# Import required modules
 try:
     import torch
     import torch.nn as nn
@@ -19,30 +39,29 @@ try:
     import argparse
     import yaml
     from tqdm import tqdm
-    from datetime import datetime
-    import json
 
-    # Import local modules
-    from src.data.datasets import ChestXrayDataset
-    from src.models.integration import IntegratedModel
-    from src.utils.metrics import MetricTracker
-    from src.utils.checkpointing import CheckpointManager
-    from src.utils.optimization import CosineAnnealingWarmupRestarts
+    # Import local modules with fallbacks
+    ChestXrayDataset = import_module('src.data.datasets.ChestXrayDataset',
+                                    'baseline_spatial.src.data.datasets.ChestXrayDataset')
+    IntegratedModel = import_module('src.models.integration.IntegratedModel',
+                                  'baseline_spatial.src.models.integration.IntegratedModel')
+    MetricTracker = import_module('src.utils.metrics.MetricTracker',
+                                'baseline_spatial.src.utils.metrics.MetricTracker')
+    CheckpointManager = import_module('src.utils.checkpointing.CheckpointManager',
+                                    'baseline_spatial.src.utils.checkpointing.CheckpointManager')
+    CosineAnnealingWarmupRestarts = import_module('src.utils.optimization.CosineAnnealingWarmupRestarts',
+                                                 'baseline_spatial.src.utils.optimization.CosineAnnealingWarmupRestarts')
 
 except ImportError as e:
     print(f"Error importing required modules: {e}")
-    print("\nTroubleshooting steps:")
-    print("1. Verify you're in the correct directory:")
-    print(f"   Current directory: {os.getcwd()}")
-    print(f"   Project root: {PROJECT_ROOT}")
-    print("\n2. Check if package is installed:")
-    print("   pip list | grep baseline-spatial")
-    print("\n3. Verify Python path:")
-    print(f"   PYTHONPATH: {os.environ.get('PYTHONPATH', 'Not set')}")
-    print("\n4. Install requirements:")
-    print("   pip install -r requirements.txt")
-    print("   pip install -e .")
+    print("\nDebug information:")
+    print(f"Current directory: {os.getcwd()}")
+    print(f"Project root: {PROJECT_ROOT}")
+    print(f"Python path: {sys.path}")
+    print(f"Available packages:")
+    os.system("pip list")
     sys.exit(1)
+
 
 
 def parse_args():
