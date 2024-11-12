@@ -17,7 +17,8 @@ class SpatialDistanceGraph(nn.Module):
             hidden_dim: int = 256,
             num_heads: int = 8,
             dropout: float = 0.1,
-            anatomical_weights: Optional[torch.Tensor] = None
+            anatomical_weights: Optional[torch.Tensor] = None,
+            num_anatomical_regions: Optional[int] = 7  # Added parameter with default value
     ):
         super().__init__()
 
@@ -25,6 +26,7 @@ class SpatialDistanceGraph(nn.Module):
         self.feature_dim = feature_dim
         self.hidden_dim = hidden_dim
         self.num_heads = num_heads
+        self.num_anatomical_regions = num_anatomical_regions
 
         # Initialize anatomical region weights if not provided
         if anatomical_weights is None:
@@ -37,6 +39,11 @@ class SpatialDistanceGraph(nn.Module):
 
         # Disease embedding layers
         self.disease_embedding = nn.Linear(feature_dim, hidden_dim)
+
+        # Region embeddings
+        self.region_embedding = nn.Parameter(
+            torch.randn(num_anatomical_regions, hidden_dim)
+        )
 
         # Graph attention layers
         self.gat_layers = nn.ModuleList([
@@ -55,6 +62,10 @@ class SpatialDistanceGraph(nn.Module):
         # Dropout
         self.dropout = nn.Dropout(dropout)
 
+        # Layer normalization
+        self.norm1 = nn.LayerNorm(hidden_dim)
+        self.norm2 = nn.LayerNorm(feature_dim)
+
     def _initialize_anatomical_weights(self) -> torch.Tensor:
         """Initialize anatomical region weights based on clinical knowledge."""
         weights = {
@@ -68,7 +79,7 @@ class SpatialDistanceGraph(nn.Module):
         }
 
         # Create 7x7 weight matrix for 7 anatomical regions
-        W = torch.ones(7, 7)
+        W = torch.ones(self.num_anatomical_regions, self.num_anatomical_regions)
         for i, w1 in enumerate(weights.values()):
             for j, w2 in enumerate(weights.values()):
                 W[i, j] = (w1 + w2) / 2
@@ -155,7 +166,7 @@ class SpatialDistanceGraph(nn.Module):
             features: torch.Tensor,
             bb_coords: Optional[torch.Tensor] = None,
             adj_matrix: Optional[torch.Tensor] = None
-    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+    ) -> Tuple[torch.Tensor, torch.Tensor]:  # Changed return type
         """
         Forward pass of the spatial graph module.
 
@@ -165,12 +176,13 @@ class SpatialDistanceGraph(nn.Module):
             adj_matrix: Pre-computed adjacency matrix [num_diseases, num_diseases]
 
         Returns:
-            Updated features and attention weights
+            Tuple of (updated features, attention weights)
         """
         batch_size = features.size(0)
 
         # Project features to hidden dimension
         x = self.disease_embedding(features)
+        x = self.norm1(x)
 
         # Compute spatial distributions if BB coordinates are provided
         if bb_coords is not None:
@@ -182,7 +194,7 @@ class SpatialDistanceGraph(nn.Module):
 
             # Compute EMD-based adjacency matrix if not provided
             if adj_matrix is None:
-                adj_matrix = torch.zeros(batch_size, self.num_diseases, self.num_diseases)
+                adj_matrix = torch.zeros(batch_size, self.num_diseases, self.num_diseases, device=features.device)
 
                 for scale, dist in enumerate(distributions):
                     scale_weight = [0.2, 0.3, 0.5][scale]
@@ -194,20 +206,29 @@ class SpatialDistanceGraph(nn.Module):
 
                 # Normalize adjacency matrix
                 adj_matrix = F.softmax(adj_matrix, dim=-1)
+        else:
+            # Use learned adjacency if no bounding boxes provided
+            adj_matrix = torch.ones(
+                batch_size, self.num_diseases, self.num_diseases,
+                device=features.device
+            ) / self.num_diseases
 
         # Process through GAT layers
-        attention_weights = {}
-        for i, gat_layer in enumerate(self.gat_layers):
+        attention_weights = []
+        for gat_layer in self.gat_layers:
             x, attn = gat_layer(x, adj_matrix)
-            attention_weights[f'layer_{i}'] = attn
-            if i < len(self.gat_layers) - 1:
-                x = F.elu(x)
-                x = self.dropout(x)
+            attention_weights.append(attn)
+            x = F.elu(x)
+            x = self.dropout(x)
 
         # Project back to original feature dimension
         output = self.output_proj(x)
+        output = self.norm2(output)
 
-        return output, attention_weights
+        # Average attention weights across layers
+        final_attention = torch.stack(attention_weights).mean(0)
+
+        return output, final_attention
 
 
 class GraphAttentionLayer(nn.Module):
@@ -272,7 +293,7 @@ class GraphAttentionLayer(nn.Module):
 
         # Concatenate features
         concat_features = torch.cat([Whj.repeat(1, 1, num_nodes, 1, 1),
-                                     Whi.repeat(1, num_nodes, 1, 1, 1)], dim=-1)
+                                   Whi.repeat(1, num_nodes, 1, 1, 1)], dim=-1)
 
         # Compute attention scores
         e = torch.matmul(concat_features, self.a).squeeze(-1)
@@ -301,5 +322,4 @@ class GraphAttentionLayer(nn.Module):
 
         return out, attention
 
-
-
+    
