@@ -1,31 +1,55 @@
 # scripts/train_integrated.py
 
-from pathlib import Path
-import yaml
 import os
 import sys
+from pathlib import Path
 
 # Add project root to Python path
 project_root = Path(__file__).parent.parent
-sys.path.append(str(project_root))
+sys.path.insert(0, str(project_root))
 
-import torch
-import torch.nn as nn
-import torch.optim as optim
-from torch.cuda.amp import GradScaler, autocast
-from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.utils.data.distributed import DistributedSampler
-import wandb
-import argparse
+try:
+    import torch
+    import torch.nn as nn
+    import torch.optim as optim
+    from torch.cuda.amp import GradScaler, autocast
+    from torch.nn.parallel import DistributedDataParallel as DDP
+    from torch.utils.data.distributed import DistributedSampler
+    import wandb
+    import argparse
+    import yaml
+    from tqdm import tqdm
+    from datetime import datetime
+    import json
 
-from tqdm import tqdm
+    try:
+        from src.data.datasets import ChestXrayDataset
+    except ImportError:
+        # Alternative import path
+        from baseline_spatial.src.data.datasets import ChestXrayDataset
 
-from src.models.integration import IntegratedModel
-from src.data.datasets import ChestXrayDataset
-from src.utils.metrics import MetricTracker
-from src.utils.checkpointing import CheckpointManager
-from src.utils.optimization import CosineAnnealingWarmupRestarts
+    try:
+        from src.models.integration import IntegratedModel
+    except ImportError:
+        from baseline_spatial.src.models.integration import IntegratedModel
 
+    try:
+        from src.utils.metrics import MetricTracker
+        from src.utils.checkpointing import CheckpointManager
+        from src.utils.optimization import CosineAnnealingWarmupRestarts
+    except ImportError:
+        from baseline_spatial.src.utils.metrics import MetricTracker
+        from baseline_spatial.src.utils.checkpointing import CheckpointManager
+        from baseline_spatial.src.utils.optimization import CosineAnnealingWarmupRestarts
+
+except ImportError as e:
+    print(f"Error importing required modules: {e}")
+    print("\nPlease ensure all requirements are installed and the project is set up correctly:")
+    print("1. Run: pip install -r requirements.txt")
+    print("2. Make sure you're in the project root directory")
+    print("3. Run: pip install -e .")
+    sys.exit(1)
+    
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Train the integrated model.')

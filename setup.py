@@ -6,6 +6,7 @@ setup(
     name="baseline-spatial",
     version="0.1",
     packages=find_packages(),
+    python_requires=">=3.8",
     install_requires=[
         'torch>=2.0.0',
         'torchvision>=0.15.0',
@@ -18,3 +19,4 @@ setup(
         'tqdm>=4.61.0'
     ]
 )
+
