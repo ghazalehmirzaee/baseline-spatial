@@ -1,5 +1,14 @@
 # scripts/train_integrated.py
 
+from pathlib import Path
+import yaml
+import os
+import sys
+
+# Add project root to Python path
+project_root = Path(__file__).parent.parent
+sys.path.append(str(project_root))
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -8,9 +17,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data.distributed import DistributedSampler
 import wandb
 import argparse
-from pathlib import Path
-import yaml
-import os
+
 from tqdm import tqdm
 
 from src.models.integration import IntegratedModel
@@ -21,11 +28,13 @@ from src.utils.optimization import CosineAnnealingWarmupRestarts
 
 
 def parse_args():
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description='Train the integrated model.')
     parser.add_argument('--config', type=str, required=True,
-                        help='Path to config file')
+                      help='Path to config file')
     parser.add_argument('--local_rank', type=int, default=-1,
-                        help='Local rank for distributed training')
+                      help='Local rank for distributed training')
+    parser.add_argument('--resume', type=str, default=None,
+                      help='Path to checkpoint for resuming training')
     return parser.parse_args()
 
 
