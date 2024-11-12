@@ -295,4 +295,3 @@ class IntegratedModel(nn.Module):
             'consistency_loss': consistency_loss
         }
 
-    

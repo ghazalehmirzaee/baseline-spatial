@@ -6,12 +6,6 @@ import torch.nn.functional as F
 from typing import Dict, List, Optional, Tuple
 import numpy as np
 
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from typing import Dict, List, Optional, Tuple
-import numpy as np
-
 
 class SpatialDistanceGraph(nn.Module):
     def __init__(
@@ -49,14 +43,7 @@ class SpatialDistanceGraph(nn.Module):
         self.norm1 = nn.LayerNorm(hidden_dim)
         self.norm2 = nn.LayerNorm(feature_dim)
 
-        # Initialize anatomical weights
-        if anatomical_weights is None:
-            self.register_buffer("anatomical_weights", self._initialize_anatomical_weights())
-        else:
-            self.register_buffer("anatomical_weights", anatomical_weights)
-
-    def _initialize_anatomical_weights(self) -> torch.Tensor:
-        """Initialize anatomical region weights."""
+        # Initialize anatomical weights and register as buffer
         weights = torch.tensor([
             1.0,  # Upper lung fields
             1.0,  # Middle lung fields
@@ -66,7 +53,13 @@ class SpatialDistanceGraph(nn.Module):
             1.1,  # Hilar regions
             1.4  # Mediastinal region
         ])
-        return weights
+        self.register_buffer("anatomical_weights", weights)
+
+        # Disease name mapping
+        self.disease_name_mapping = {
+            'Infiltrate': 'Infiltration',
+            'Infiltration': 'Infiltration'
+        }
 
     def compute_spatial_distribution(
             self,
@@ -75,10 +68,13 @@ class SpatialDistanceGraph(nn.Module):
     ) -> torch.Tensor:
         """Compute spatial distribution on grid for bounding boxes."""
         batch_size = bb_coords.shape[0]
-        grid = torch.zeros(batch_size, self.num_diseases, grid_size, grid_size, device=bb_coords.device)
+        device = bb_coords.device
+
+        # Create grid on the correct device
+        grid = torch.zeros(batch_size, self.num_diseases, grid_size, grid_size, device=device)
 
         # Scale coordinates to grid size
-        scale = grid_size / 1000.0  # assuming original image is 1000x1000
+        scale = grid_size / 1000.0
         bb_coords = bb_coords * scale
 
         for b in range(batch_size):
@@ -87,9 +83,10 @@ class SpatialDistanceGraph(nn.Module):
                     x, y, w, h = bb_coords[b, d]
                     x1, y1 = max(0, int(x)), max(0, int(y))
                     x2, y2 = min(grid_size - 1, int(x + w)), min(grid_size - 1, int(y + h))
-                    grid[b, d, y1:y2 + 1, x1:x2 + 1] = 1.0
+                    if x1 < x2 and y1 < y2:  # Valid box dimensions
+                        grid[b, d, y1:y2 + 1, x1:x2 + 1] = 1.0
 
-        return grid.view(batch_size, self.num_diseases, -1)  # Flatten spatial dimensions
+        return grid.view(batch_size, self.num_diseases, -1)
 
     def compute_emd(
             self,
@@ -97,27 +94,33 @@ class SpatialDistanceGraph(nn.Module):
             dist2: torch.Tensor,
             grid_size: int
     ) -> torch.Tensor:
-        """Compute Earth Mover's Distance between spatial distributions."""
+        """Compute Earth Mover's Distance between distributions."""
+        device = dist1.device
         batch_size = dist1.shape[0]
         n = grid_size * grid_size
 
-        # Create cost matrix based on grid positions
-        y, x = torch.meshgrid(torch.arange(grid_size), torch.arange(grid_size))
-        pos = torch.stack([x.flatten(), y.flatten()], dim=1).float().to(dist1.device)
+        # Create position tensors on the correct device
+        y, x = torch.meshgrid(
+            torch.arange(grid_size, device=device),
+            torch.arange(grid_size, device=device),
+            indexing='ij'
+        )
+        pos = torch.stack([x.flatten(), y.flatten()], dim=1).float()
 
-        C = torch.cdist(pos, pos)  # n x n cost matrix
-        C = C / C.max()  # Normalize costs
+        # Compute cost matrix
+        C = torch.cdist(pos, pos)
+        C = C / C.max()
 
-        # Apply anatomical weights based on grid regions
-        region_weights = self._get_region_weights(grid_size)
-        C = C * region_weights
+        # Get region weights on the correct device
+        region_weights = self._get_region_weights(grid_size).to(device)
+        C = C * region_weights.view(-1, 1)
 
         # Prepare distributions
         P = dist1.view(batch_size, n, 1)
         Q = dist2.view(batch_size, 1, n)
 
         # Sinkhorn algorithm
-        eps = 0.1  # regularization parameter
+        eps = 0.1
         max_iters = 100
         log_P = torch.log(P + 1e-8)
         log_Q = torch.log(Q + 1e-8)
@@ -125,7 +128,7 @@ class SpatialDistanceGraph(nn.Module):
         u = torch.zeros_like(P)
         v = torch.zeros_like(Q)
 
-        K = torch.exp(-C / eps)
+        K = torch.exp(-C / eps).to(device)
 
         for _ in range(max_iters):
             u = log_P - torch.logsumexp(v + K, dim=-1, keepdim=True)
@@ -141,17 +144,18 @@ class SpatialDistanceGraph(nn.Module):
 
     def _get_region_weights(self, grid_size: int) -> torch.Tensor:
         """Get region weights for the grid."""
-        weights = torch.ones(grid_size, grid_size)
+        device = self.anatomical_weights.device
+        weights = torch.ones(grid_size, grid_size, device=device)
 
-        # Define regions (simplified)
+        # Define regions
         upper = slice(0, grid_size // 3)
         middle = slice(grid_size // 3, 2 * grid_size // 3)
         lower = slice(2 * grid_size // 3, None)
 
         # Apply weights
-        weights[upper, :] *= self.anatomical_weights[0]  # Upper lung
-        weights[middle, :] *= self.anatomical_weights[1]  # Middle lung
-        weights[lower, :] *= self.anatomical_weights[2]  # Lower lung
+        weights[upper, :] = weights[upper, :] * self.anatomical_weights[0]
+        weights[middle, :] = weights[middle, :] * self.anatomical_weights[1]
+        weights[lower, :] = weights[lower, :] * self.anatomical_weights[2]
 
         return weights.flatten()
 
@@ -163,6 +167,7 @@ class SpatialDistanceGraph(nn.Module):
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """Forward pass of the spatial graph."""
         batch_size = features.size(0)
+        device = features.device
 
         # Project features to hidden dimension
         x = self.disease_embedding(features)
@@ -170,7 +175,7 @@ class SpatialDistanceGraph(nn.Module):
 
         # Compute spatial adjacency if BB coordinates are provided
         if bb_coords is not None:
-            adj_matrix = torch.zeros(batch_size, self.num_diseases, self.num_diseases, device=features.device)
+            adj_matrix = torch.zeros(batch_size, self.num_diseases, self.num_diseases, device=device)
 
             # Multi-scale processing
             for grid_size in self.grid_sizes:
@@ -187,8 +192,10 @@ class SpatialDistanceGraph(nn.Module):
             adj_matrix = F.softmax(adj_matrix, dim=-1)
         else:
             # Use uniform adjacency if no bounding boxes
-            adj_matrix = torch.ones(batch_size, self.num_diseases, self.num_diseases,
-                                    device=features.device) / self.num_diseases
+            adj_matrix = torch.ones(
+                batch_size, self.num_diseases, self.num_diseases,
+                device=device
+            ) / self.num_diseases
 
         # Process through GAT layers
         attention_weights = []
@@ -209,8 +216,6 @@ class SpatialDistanceGraph(nn.Module):
 
 
 class GraphAttentionLayer(nn.Module):
-    """Graph attention layer implementation."""
-
     def __init__(
             self,
             in_features: int,
@@ -273,3 +278,4 @@ class GraphAttentionLayer(nn.Module):
 
         return x, attn.mean(dim=1)  # Average attention weights across heads
 
+    
