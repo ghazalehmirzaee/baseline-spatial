@@ -187,6 +187,12 @@ def train_epoch(model, phase, train_loader, optimizer, scheduler, scaler, metric
     if is_main_process:
         pbar.close()
 
+    # In train_epoch function
+    # print(f"Features shape: {features.shape}")
+    print(f"BB coords shape: {bb_coords.shape if bb_coords is not None else None}")
+    print(f"Output shape: {outputs['graph_features'].shape}")
+    print(f"Attention shape: {outputs['spatial_attention'].shape}")
+
     return metric_tracker.compute()
 
 
@@ -255,7 +261,8 @@ def main():
         image_dir=config['data']['train_image_dir'],
         label_file=config['data']['train_label_file'],
         bbox_file=config['data']['bbox_file'],
-        transform=True
+        transform=True,
+        debug=True
     )
 
     val_dataset = ChestXrayDataset(
