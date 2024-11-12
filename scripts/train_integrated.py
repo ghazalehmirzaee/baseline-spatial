@@ -1,66 +1,32 @@
 # scripts/train_integrated.py
-
+import argparse
 import os
 import sys
 from pathlib import Path
 
-# Get absolute path to project root
+from torch import GradScaler, autocast
+from torch.distributed._composable.replicate import DDP
+from torch.utils.data import DistributedSampler
+
+# Add project root to Python path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-# Define custom import function
-def import_module(module_path, backup_path=None):
-    try:
-        # Try direct import
-        module_parts = module_path.split('.')
-        current_module = __import__(module_parts[0])
-        for part in module_parts[1:]:
-            current_module = getattr(current_module, part)
-        return current_module
-    except ImportError:
-        if backup_path:
-            # Try backup import path
-            module_parts = backup_path.split('.')
-            current_module = __import__(module_parts[0])
-            for part in module_parts[1:]:
-                current_module = getattr(current_module, part)
-            return current_module
-        raise
+# Basic imports
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import wandb
+import yaml
+from tqdm import tqdm
 
-# Import required modules
-try:
-    import torch
-    import torch.nn as nn
-    import torch.optim as optim
-    from torch.cuda.amp import GradScaler, autocast
-    from torch.nn.parallel import DistributedDataParallel as DDP
-    from torch.utils.data.distributed import DistributedSampler
-    import wandb
-    import argparse
-    import yaml
-    from tqdm import tqdm
+# Direct imports from src
+from src.data.datasets import ChestXrayDataset
+from src.models.integration import IntegratedModel
+from src.utils.metrics import MetricTracker
+from src.utils.checkpointing import CheckpointManager
+from src.utils.optimization import CosineAnnealingWarmupRestarts
 
-    # Import local modules with fallbacks
-    ChestXrayDataset = import_module('src.data.datasets.ChestXrayDataset',
-                                    'baseline_spatial.src.data.datasets.ChestXrayDataset')
-    IntegratedModel = import_module('src.models.integration.IntegratedModel',
-                                  'baseline_spatial.src.models.integration.IntegratedModel')
-    MetricTracker = import_module('src.utils.metrics.MetricTracker',
-                                'baseline_spatial.src.utils.metrics.MetricTracker')
-    CheckpointManager = import_module('src.utils.checkpointing.CheckpointManager',
-                                    'baseline_spatial.src.utils.checkpointing.CheckpointManager')
-    CosineAnnealingWarmupRestarts = import_module('src.utils.optimization.CosineAnnealingWarmupRestarts',
-                                                 'baseline_spatial.src.utils.optimization.CosineAnnealingWarmupRestarts')
-
-except ImportError as e:
-    print(f"Error importing required modules: {e}")
-    print("\nDebug information:")
-    print(f"Current directory: {os.getcwd()}")
-    print(f"Project root: {PROJECT_ROOT}")
-    print(f"Python path: {sys.path}")
-    print(f"Available packages:")
-    os.system("pip list")
-    sys.exit(1)
 
 
 
