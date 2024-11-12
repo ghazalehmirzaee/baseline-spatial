@@ -38,15 +38,13 @@ import sys
 import traceback
 from datetime import datetime
 from pathlib import Path
-import sys
-from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
 
-# Debug output to verify Python path setup
-print("Updated sys.path:", sys.path)
+# Add the project root to the Python path
+project_root = Path(__file__).resolve().parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+print(f"Updated sys.path: {sys.path}")
 
 # Rest of your imports
 import torch
@@ -60,7 +58,6 @@ import yaml
 import wandb
 from tqdm import tqdm
 
-
 # Local imports
 from src.data.loaders import create_data_loaders
 from src.data.datasets import ChestXrayDataset
@@ -68,13 +65,6 @@ from src.models.integration import IntegratedModel
 from src.utils.metrics import MetricTracker
 from src.utils.checkpointing import CheckpointManager
 from src.utils.optimization import CosineAnnealingWarmupRestarts
-
-
-# Add debug prints
-print(f"Python path: {sys.path}")
-print(f"Project root: {PROJECT_ROOT}")
-print(f"Current working directory: {Path.cwd()}")
-
 
 # Custom collate function for handling None values
 def custom_collate(batch):
