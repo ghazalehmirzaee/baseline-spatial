@@ -1,37 +1,5 @@
 # scripts/train_integrated.py
-#
-# import argparse
-# import os
-# import sys
-# from pathlib import Path
-# from datetime import datetime
-#
-# # Add project root to Python path
-# PROJECT_ROOT = Path(__file__).resolve().parent.parent
-# sys.path.insert(0, str(PROJECT_ROOT))
-#
-# # PyTorch imports
-# import torch
-# import torch.nn as nn
-# import torch.optim as optim
-# from torch import autocast, GradScaler
-# from torch.nn.parallel import DistributedDataParallel as DDP
-# from torch.utils.data import DataLoader, DistributedSampler
-#
-# # Other imports
-# import yaml
-# import wandb
-# from tqdm import tqdm
-#
-# # Local imports
-# from src.data.loaders import create_data_loaders
-# from src.data.datasets import ChestXrayDataset
-# from src.models.integration import IntegratedModel
-# from src.utils.metrics import MetricTracker
-# from src.utils.checkpointing import CheckpointManager
-# from src.utils.optimization import CosineAnnealingWarmupRestarts
-# import traceback
-# import numpy as np
+
 import argparse
 import os
 import sys
@@ -65,6 +33,23 @@ from src.models.integration import IntegratedModel
 from src.utils.metrics import MetricTracker
 from src.utils.checkpointing import CheckpointManager
 from src.utils.optimization import CosineAnnealingWarmupRestarts
+
+import logging
+import os
+from pathlib import Path
+from datetime import datetime
+
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler('training.log')
+    ]
+)
+logger = logging.getLogger(__name__)
+
 
 # Custom collate function for handling None values
 def custom_collate(batch):
@@ -192,6 +177,7 @@ def train_epoch(model, phase, train_loader, optimizer, scheduler, scaler, metric
 
         except Exception as e:
             logger.error(f"Error in batch {batch_idx}: {str(e)}")
+            logger.error("Stack trace:", exc_info=True)
             continue
 
     if is_main_process:
