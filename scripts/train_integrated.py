@@ -38,11 +38,15 @@ import sys
 import traceback
 from datetime import datetime
 from pathlib import Path
+import sys
+from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-sys.path = [str(PROJECT_ROOT)] + sys.path
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
-print("PYTHONPATH:", sys.path)
+# Debug output to verify Python path setup
+print("Updated sys.path:", sys.path)
 
 # Rest of your imports
 import torch
@@ -58,7 +62,9 @@ from tqdm import tqdm
 
 
 # Local imports
-from src.data.loaders import create_data_loaders
+# from src.data.loaders import create_data_loaders
+from baseline_spatial.src.data.loaders import create_data_loaders
+
 from src.data.datasets import ChestXrayDataset
 from src.models.integration import IntegratedModel
 from src.utils.metrics import MetricTracker
