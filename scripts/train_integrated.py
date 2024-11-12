@@ -134,7 +134,7 @@ def get_model(model):
 
 
 def train_epoch(model, phase, train_loader, optimizer, scheduler, scaler, metric_tracker, is_main_process):
-    """Train for one epoch."""
+    """Train for one epoch with improved error handling."""
     model.train()
     metric_tracker.reset()
 
@@ -142,56 +142,60 @@ def train_epoch(model, phase, train_loader, optimizer, scheduler, scaler, metric
         pbar = tqdm(total=len(train_loader), desc=f"Training ({phase['name']})")
 
     for batch_idx, (images, labels, bb_coords) in enumerate(train_loader):
-        # Move data to GPU
-        images = images.cuda(non_blocking=True)
-        labels = labels.cuda(non_blocking=True)
-        if bb_coords is not None:
-            bb_coords = bb_coords.cuda(non_blocking=True)
+        try:
+            # Move data to GPU
+            images = images.cuda(non_blocking=True)
+            labels = labels.cuda(non_blocking=True)
+            if bb_coords is not None:
+                bb_coords = bb_coords.cuda(non_blocking=True)
 
-        # Clear gradients
-        optimizer.zero_grad()
+                # Validate bounding boxes
+                if torch.isnan(bb_coords).any() or torch.isinf(bb_coords).any():
+                    logger.warning(f"Invalid bounding boxes in batch {batch_idx}, using None instead")
+                    bb_coords = None
 
-        # Forward pass with mixed precision
-        with autocast(device_type='cuda', dtype=torch.float16):
-            outputs = model(images, bb_coords, labels)
-            loss = outputs['loss']
+            # Clear gradients
+            optimizer.zero_grad()
 
-        # Backward pass with gradient scaling
-        scaler.scale(loss).backward()
+            # Forward pass with mixed precision
+            with autocast(device_type='cuda', dtype=torch.float16):
+                outputs = model(images, bb_coords, labels)
+                loss = outputs['loss']
 
-        # Gradient clipping
-        scaler.unscale_(optimizer)
-        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            # Backward pass with gradient scaling
+            scaler.scale(loss).backward()
 
-        # Update weights
-        scaler.step(optimizer)
-        scaler.update()
+            # Gradient clipping
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
 
-        # Update learning rate
-        scheduler.step()
+            # Update weights
+            scaler.step(optimizer)
+            scaler.update()
 
-        # Update metrics
-        metric_tracker.update(
-            outputs['logits'].detach(),
-            labels,
-            loss.item()
-        )
+            # Update learning rate
+            scheduler.step()
 
-        if is_main_process:
-            pbar.update(1)
-            pbar.set_postfix({
-                'loss': f"{loss.item():.4f}",
-                'lr': f"{scheduler.get_last_lr()[0]:.6f}"
-            })
+            # Update metrics
+            metric_tracker.update(
+                outputs['logits'].detach(),
+                labels,
+                loss.item()
+            )
+
+            if is_main_process:
+                pbar.update(1)
+                pbar.set_postfix({
+                    'loss': f"{loss.item():.4f}",
+                    'lr': f"{scheduler.get_last_lr()[0]:.6f}"
+                })
+
+        except Exception as e:
+            logger.error(f"Error in batch {batch_idx}: {str(e)}")
+            continue
 
     if is_main_process:
         pbar.close()
-
-    # In train_epoch function
-    # print(f"Features shape: {features.shape}")
-    print(f"BB coords shape: {bb_coords.shape if bb_coords is not None else None}")
-    print(f"Output shape: {outputs['graph_features'].shape}")
-    print(f"Attention shape: {outputs['spatial_attention'].shape}")
 
     return metric_tracker.compute()
 
